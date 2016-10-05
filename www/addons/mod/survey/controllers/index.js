@@ -23,13 +23,13 @@ angular.module('mm.addons.mod_survey')
  */
 .controller('mmaModSurveyIndexCtrl', function($scope, $stateParams, $mmaModSurvey, $mmUtil, $q, $mmCourse, $translate, $mmText,
             $ionicPlatform, $ionicScrollDelegate, $mmaModSurveyOffline, mmaModSurveyComponent, $mmaModSurveySync, $mmSite,
-            $mmEvents, mmaModSurveyAutomSyncedEvent, $mmApp, $mmEvents, mmCoreEventOnlineStatusChanged) {
+            $mmEvents, mmaModSurveyAutomSyncedEvent) {
     var module = $stateParams.module || {},
         courseid = $stateParams.courseid,
         survey,
         userId = $mmSite.getUserId(),
         scrollView,
-        syncObserver, onlineObserver;
+        syncObserver;
 
     $scope.title = module.name;
     $scope.description = module.description;
@@ -40,12 +40,10 @@ angular.module('mm.addons.mod_survey')
     $scope.answers = {};
     $scope.isTablet = $ionicPlatform.isTablet();
     $scope.refreshIcon = 'spinner';
-    $scope.syncIcon = 'spinner';
     $scope.component = mmaModSurveyComponent;
 
     // Convenience function to get survey data.
-    function fetchSurveyData(refresh, sync, showErrors) {
-        $scope.isOnline = $mmApp.isOnline();
+    function fetchSurveyData(refresh, sync) {
         return $mmaModSurvey.getSurvey(courseid, module.id).then(function(surveydata) {
             survey = surveydata;
 
@@ -55,7 +53,7 @@ angular.module('mm.addons.mod_survey')
 
             if (sync) {
                 // Try to synchronize the survey.
-                return syncSurvey(showErrors).then(function(answersSent) {
+                return syncSurvey(false).then(function(answersSent) {
                     if (answersSent) {
                         // Answers were sent, update the survey.
                         return $mmaModSurvey.getSurvey(courseid, module.id).then(function(surveyData) {
@@ -113,12 +111,12 @@ angular.module('mm.addons.mod_survey')
     }
 
     // Convenience function to refresh all the data.
-    function refreshAllData(sync, showErrors) {
+    function refreshAllData(sync) {
         var p1 = $mmaModSurvey.invalidateSurveyData(courseid),
             p2 = survey ? $mmaModSurvey.invalidateQuestions(survey.id) : $q.when();
 
         return $q.all([p1, p2]).finally(function() {
-            return fetchSurveyData(true, sync, showErrors);
+            return fetchSurveyData(true, sync);
         });
     }
 
@@ -129,7 +127,6 @@ angular.module('mm.addons.mod_survey')
     }).finally(function() {
         $scope.surveyLoaded = true;
         $scope.refreshIcon = 'ion-refresh';
-        $scope.syncIcon = 'ion-loop';
     });
 
     // Check if answers are valid to be submitted.
@@ -177,17 +174,30 @@ angular.module('mm.addons.mod_survey')
     };
 
     // Pull to refresh.
-    $scope.refreshSurvey = function(showErrors) {
-        console.log(showErrors);
+    $scope.refreshSurvey = function() {
         if ($scope.surveyLoaded) {
             $scope.refreshIcon = 'spinner';
-            $scope.syncIcon = 'spinner';
-            return refreshAllData(true, showErrors).finally(function() {
+            return refreshAllData(true).finally(function() {
                 $scope.refreshIcon = 'ion-refresh';
-                $scope.syncIcon = 'ion-loop';
                 $scope.$broadcast('scroll.refreshComplete');
             });
         }
+    };
+
+    $scope.sync = function() {
+        var modal = $mmUtil.showModalLoading('mm.settings.synchronizing', true);
+        syncSurvey(true).then(function() {
+            // Refresh the data.
+            $scope.surveyLoaded = false;
+            $scope.refreshIcon = 'spinner';
+            scrollTop();
+            refreshAllData(false).finally(function() {
+                $scope.surveyLoaded = true;
+                $scope.refreshIcon = 'ion-refresh';
+            });
+        }).finally(function() {
+            modal.dismiss();
+        });
     };
 
     function scrollTop() {
@@ -216,29 +226,21 @@ angular.module('mm.addons.mod_survey')
         });
     }
 
-    // Refresh online status when changes.
-    onlineObserver = $mmEvents.on(mmCoreEventOnlineStatusChanged, function(online) {
-        $scope.isOnline = online;
-    });
-
     // Refresh data if this survey is synchronized automatically.
     syncObserver = $mmEvents.on(mmaModSurveyAutomSyncedEvent, function(data) {
         if (survey && data && data.siteid == $mmSite.getId() && data.surveyid == survey.id && data.userid == userId) {
             // Refresh the data.
             $scope.surveyLoaded = false;
             $scope.refreshIcon = 'spinner';
-            $scope.syncIcon = 'spinner';
             scrollTop();
             refreshAllData(false).finally(function() {
                 $scope.surveyLoaded = true;
                 $scope.refreshIcon = 'ion-refresh';
-                $scope.syncIcon = 'ion-loop';
             });
         }
     });
 
     $scope.$on('$destroy', function() {
         syncObserver && syncObserver.off && syncObserver.off();
-        onlineObserver && onlineObserver.off && onlineObserver.off();
     });
 });

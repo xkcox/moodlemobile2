@@ -215,8 +215,7 @@ angular.module('mm.core')
             captureLink: '=?',
             closeOnClick: '=?',
             closeWhenDone: '=?',
-            priority: '=?',
-            ngShow: '=?'
+            priority: '=?'
         },
         link: function(scope, element, attrs, CtxtMenuCtrl) {
             // Remove ng-transclude from parent. If this directive is inside ng-transclude it means ng-transclude has been
@@ -230,9 +229,6 @@ angular.module('mm.core')
             scope.priority = scope.priority || 1;
             scope.closeOnClick = getBooleanValue(scope.closeOnClick, true);
             scope.closeWhenDone = getBooleanValue(scope.closeWhenDone, false);
-            if (typeof attrs.ngShow == 'undefined') {
-                scope.ngShow = true;
-            }
 
             if (scope.action) {
                 scope.href = "";

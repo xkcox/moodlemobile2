@@ -166,7 +166,7 @@ angular.module('mm.core', ['pascalprecht.translate'])
 })
 
 .run(function($ionicPlatform, $ionicBody, $window, $mmEvents, $mmInitDelegate, mmCoreEventKeyboardShow, mmCoreEventKeyboardHide,
-        $mmApp, $timeout, mmCoreEventOnline, mmCoreEventOnlineStatusChanged) {
+        $mmApp, $timeout, mmCoreEventOnline) {
     // Execute all the init processes.
     $mmInitDelegate.executeInitProcesses();
 
@@ -191,13 +191,11 @@ angular.module('mm.core', ['pascalprecht.translate'])
     var lastExecution = 0;
 
     $mmApp.ready().then(function() {
-        document.addEventListener('online', function() { sendOnlineEvent(true); }, false); // Cordova event.
-        window.addEventListener('online', function() { sendOnlineEvent(true); }, false); // HTML5 event.
-        document.addEventListener('offline', function() { sendOnlineEvent(false); }, false); // Cordova event.
-        window.addEventListener('offline', function() { sendOnlineEvent(false); }, false); // HTML5 event.
+        document.addEventListener('online', sendOnlineEvent, false); // Cordova event.
+        window.addEventListener('online', sendOnlineEvent, false); // HTML5 event.
     });
 
-    function sendOnlineEvent(online) {
+    function sendOnlineEvent() {
         // The online function can be called several times in a row, prevent consecutive executions.
         var now = new Date().getTime();
         if (now - lastExecution < 5000) {
@@ -206,11 +204,7 @@ angular.module('mm.core', ['pascalprecht.translate'])
         lastExecution = now;
 
         $timeout(function() { // Minor delay just to make sure network is fully established.
-            if (online) {
-                // Deprecated on version 3.1.3.
-                $mmEvents.trigger(mmCoreEventOnline);
-            }
-            $mmEvents.trigger(mmCoreEventOnlineStatusChanged, online);
+            $mmEvents.trigger(mmCoreEventOnline);
         }, 1000);
     }
 });

@@ -463,10 +463,8 @@ angular.module('mm.core')
     return self;
 })
 
-.run(function($mmEvents, $mmCronDelegate, mmCoreEventOnlineStatusChanged) {
-    $mmEvents.on(mmCoreEventOnlineStatusChanged, function(online) {
-        if (online) {
-            $mmCronDelegate.startNetworkHooks();
-        }
+.run(function($mmEvents, $mmCronDelegate, mmCoreEventOnline) {
+    $mmEvents.on(mmCoreEventOnline, function() {
+        $mmCronDelegate.startNetworkHooks();
     });
 });

@@ -229,9 +229,17 @@ angular.module('mm.addons.mod_forum')
      */
     self.extractStartingPost = function(posts) {
         // Check the last post first, since they'll usually be ordered by create time.
-        for (var i = posts.length - 1; i >= 0; i--) {
+        var lastPost = posts[posts.length - 1];
+        if (lastPost.parent == 0) {
+            posts.pop(); // Remove it from the array.
+            return lastPost;
+        }
+
+        // Last post wasn't the starting one. Let's search all the posts until we find the first one.
+        for (var i = 0; i < posts.length; i++) {
             if (posts[i].parent == 0) {
-                return posts.splice(i, 1).pop(); // Remove it from the array.
+                posts.splice(i, 1); // Remove it from the array.
+                return posts[i];
             }
         }
 

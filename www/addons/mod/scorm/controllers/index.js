@@ -24,13 +24,12 @@ angular.module('mm.addons.mod_scorm')
 .controller('mmaModScormIndexCtrl', function($scope, $stateParams, $mmaModScorm, $mmUtil, $q, $mmCourse, $ionicScrollDelegate,
             $mmCoursePrefetchDelegate, $mmaModScormHelper, $mmEvents, $mmSite, $state, mmCoreOutdated, mmCoreNotDownloaded,
             mmCoreDownloading, mmaModScormComponent, mmCoreEventPackageStatusChanged, $ionicHistory, mmaModScormEventAutomSynced,
-            $mmaModScormSync, $timeout, $mmText, $translate, $mmaModScormPrefetchHandler, $mmApp, $mmEvents,
-            mmCoreEventOnlineStatusChanged) {
+            $mmaModScormSync, $timeout, $mmText, $translate, $mmaModScormPrefetchHandler) {
 
     var module = $stateParams.module || {},
         courseid = $stateParams.courseid,
         scorm,
-        statusObserver, syncObserver, onlineObserver,
+        statusObserver,
         currentStatus,
         lastAttempt,
         lastOffline = false,
@@ -46,7 +45,6 @@ angular.module('mm.addons.mod_scorm')
         mode: $mmaModScorm.MODENORMAL
     };
     $scope.refreshIcon = 'spinner';
-    $scope.syncIcon = 'spinner';
     $scope.component = mmaModScormComponent;
     $scope.componentId = module.id;
 
@@ -54,8 +52,7 @@ angular.module('mm.addons.mod_scorm')
     $scope.modebrowse = $mmaModScorm.MODEBROWSE;
 
     // Convenience function to get SCORM data.
-    function fetchScormData(refresh, checkCompletion, showErrors) {
-        $scope.isOnline = $mmApp.isOnline();
+    function fetchScormData(refresh, checkCompletion) {
         return $mmaModScorm.getScorm(courseid, module.id, module.url).then(function(scormData) {
             scorm = scormData;
 
@@ -74,7 +71,7 @@ angular.module('mm.addons.mod_scorm')
                 return; // SCORM is closed or not open yet, we can't get more data.
             }
 
-            return syncScorm(!refresh, showErrors).catch(function() {
+            return syncScorm(!refresh, false).catch(function() {
                 // Ignore errors, keep getting data even if sync fails.
             }).then(function() {
 
@@ -90,7 +87,7 @@ angular.module('mm.addons.mod_scorm')
                 // Get the number of attempts and check if SCORM is incomplete.
                 return $mmaModScorm.getAttemptCount(scorm.id).then(function(attemptsData) {
                     attempts = attemptsData;
-                    $scope.hasOffline = attempts.offline.length; // Show sync button only if there are offline attempts.
+                    $scope.showSyncButton = attempts.offline.length; // Show sync button only if there are offline attempts.
 
                     // Determine the attempt that will be continued or reviewed.
                     return $mmaModScormHelper.determineAttemptToContinue(scorm, attempts).then(function(attempt) {
@@ -290,7 +287,7 @@ angular.module('mm.addons.mod_scorm')
     }
 
     // Refreshes data.
-    function refreshData(dontForceSync, checkCompletion, showErrors) {
+    function refreshData(dontForceSync, checkCompletion) {
         var promises = [];
         promises.push($mmaModScorm.invalidateScormData(courseid));
         if (scorm) {
@@ -298,7 +295,7 @@ angular.module('mm.addons.mod_scorm')
         }
 
         return $q.all(promises).finally(function() {
-            return fetchScormData(!dontForceSync, checkCompletion, showErrors);
+            return fetchScormData(!dontForceSync, checkCompletion);
         });
     }
 
@@ -367,7 +364,6 @@ angular.module('mm.addons.mod_scorm')
     }).finally(function() {
         $scope.scormLoaded = true;
         $scope.refreshIcon = 'ion-refresh';
-        $scope.syncIcon = 'ion-loop';
     });
 
     // Load a organization's TOC.
@@ -377,13 +373,11 @@ angular.module('mm.addons.mod_scorm')
         });
     };
 
-    $scope.refreshScorm = function(showErrors) {
+    $scope.refreshScorm = function() {
         if ($scope.scormLoaded) {
             $scope.refreshIcon = 'spinner';
-            $scope.syncIcon = 'spinner';
-            return refreshData(false, $scope.hasOffline, showErrors).finally(function() {
+            return refreshData().finally(function() {
                 $scope.refreshIcon = 'ion-refresh';
-                $scope.syncIcon = 'ion-loop';
                 $scope.$broadcast('scroll.refreshComplete');
             });
         }
@@ -424,6 +418,23 @@ angular.module('mm.addons.mod_scorm')
         }
     };
 
+    // Synchronize the SCORM.
+    $scope.sync = function() {
+        var modal = $mmUtil.showModalLoading('mm.settings.synchronizing', true);
+        syncScorm(false, true).then(function() {
+            // Refresh the data.
+            $scope.scormLoaded = false;
+            $scope.refreshIcon = 'spinner';
+            scrollView.scrollTop();
+            refreshData(true, true).finally(function() {
+                $scope.scormLoaded = true;
+                $scope.refreshIcon = 'ion-refresh';
+            });
+        }).finally(function() {
+            modal.dismiss();
+        });
+    };
+
     // Context Menu Description action.
     $scope.expandDescription = function() {
         $mmText.expandText($translate.instant('mm.core.description'), $scope.description, false, mmaModScormComponent, module.id);
@@ -444,35 +455,26 @@ angular.module('mm.addons.mod_scorm')
         if (forwardView && forwardView.stateName === 'site.mod_scorm-player') {
             $scope.scormLoaded = false;
             $scope.refreshIcon = 'spinner';
-            $scope.syncIcon = 'spinner';
             scrollView.scrollTop();
             // Add a delay to make sure the player has started the last writing calls so we can detect conflicts.
             $timeout(function() {
                 refreshData(false, true).finally(function() {
                     $scope.scormLoaded = true;
                     $scope.refreshIcon = 'ion-refresh';
-                    $scope.syncIcon = 'ion-loop';
                 });
             }, 500);
         }
     });
 
-    // Refresh online status when changes.
-    onlineObserver = $mmEvents.on(mmCoreEventOnlineStatusChanged, function(online) {
-        $scope.isOnline = online;
-    });
-
     // Refresh data if this SCORM is synchronized automatically.
-    syncObserver = $mmEvents.on(mmaModScormEventAutomSynced, function(data) {
+    var syncObserver = $mmEvents.on(mmaModScormEventAutomSynced, function(data) {
         if (data && data.siteid == $mmSite.getId() && data.scormid == scorm.id) {
             $scope.scormLoaded = false;
             $scope.refreshIcon = 'spinner';
-            $scope.syncIcon = 'spinner';
             scrollView.scrollTop();
             fetchScormData(false, true).finally(function() {
                 $scope.scormLoaded = true;
                 $scope.refreshIcon = 'ion-refresh';
-                $scope.syncIcon = 'ion-loop';
             });
         }
     });
@@ -480,6 +482,5 @@ angular.module('mm.addons.mod_scorm')
     $scope.$on('$destroy', function() {
         statusObserver && statusObserver.off && statusObserver.off();
         syncObserver && syncObserver.off && syncObserver.off();
-        onlineObserver && onlineObserver.off && onlineObserver.off();
     });
 });

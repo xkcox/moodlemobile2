@@ -23,8 +23,8 @@ angular.module('mm.addons.mod_forum')
  */
 .controller('mmaModForumDiscussionsCtrl', function($q, $scope, $stateParams, $mmaModForum, $mmCourse, $mmUtil, $mmGroups, $mmUser,
             $mmEvents, $ionicScrollDelegate, $ionicPlatform, mmUserProfileState, mmaModForumNewDiscussionEvent, $mmSite, $translate,
-            mmaModForumReplyDiscussionEvent, $mmText, mmaModForumComponent, $mmaModForumOffline, $mmaModForumSync, $mmEvents,
-            mmaModForumAutomSyncedEvent, mmaModForumManualSyncedEvent, $mmApp, mmCoreEventOnlineStatusChanged) {
+            mmaModForumReplyDiscussionEvent, $mmText, mmaModForumComponent, $mmaModForumOffline, $mmaModForumSync,
+            mmaModForumAutomSyncedEvent, mmaModForumManualSyncedEvent) {
     var module = $stateParams.module || {},
         courseid = $stateParams.courseid,
         forum,
@@ -32,7 +32,8 @@ angular.module('mm.addons.mod_forum')
         scrollView,
         shouldScrollTop = false,
         usesGroups = false,
-        obsNewDisc, obsReply, syncObserver, syncManualObserver, onlineObserver;
+        obsNewDisc,
+        obsReply;
 
     $scope.title = module.name;
     $scope.description = module.description;
@@ -42,13 +43,11 @@ angular.module('mm.addons.mod_forum')
     $scope.userStateName = mmUserProfileState;
     $scope.isCreateEnabled = $mmaModForum.isCreateDiscussionEnabled();
     $scope.refreshIcon = 'spinner';
-    $scope.syncIcon = 'spinner';
     $scope.component = mmaModForumComponent;
     $scope.componentId = module.id;
 
     // Convenience function to get forum data and discussions.
-    function fetchForumDataAndDiscussions(refresh, sync, showErrors) {
-        $scope.isOnline = $mmApp.isOnline();
+    function fetchForumDataAndDiscussions(refresh, sync) {
         return $mmaModForum.getForum(courseid, module.id).then(function(forumdata) {
             forum = forumdata;
 
@@ -58,7 +57,7 @@ angular.module('mm.addons.mod_forum')
 
             if (sync) {
                 // Try to synchronize the forum.
-                return syncForum(showErrors).catch(function() {
+                return syncForum(false).catch(function() {
                     // Ignore errors.
                 });
             }
@@ -162,14 +161,29 @@ angular.module('mm.addons.mod_forum')
         });
     }
 
+    $scope.sync = function() {
+        var modal = $mmUtil.showModalLoading('mm.settings.synchronizing', true);
+        syncForum(true).then(function(updated) {
+            if (updated) {
+                // Refresh the data.
+                $scope.discussionsLoaded = false;
+                $scope.refreshIcon = 'spinner';
+                scrollTop();
+                refreshData(false).finally(function() {
+                    $scope.discussionsLoaded = true;
+                    $scope.refreshIcon = 'ion-refresh';
+                });
+            }
+        }).finally(function() {
+            modal.dismiss();
+        });
+    };
+
     // Tries to synchronize the forum.
     function syncForum(showErrors) {
-        var promises = [],
-            warnings = [];
-
+        var promises = [];
         promises.push($mmaModForumSync.syncForumDiscussions(forum.id).then(function(result) {
             if (result.warnings && result.warnings.length) {
-                warnings = warnings.concat(result.warnings);
                 $mmUtil.showErrorModal(result.warnings[0]);
             }
 
@@ -178,28 +192,26 @@ angular.module('mm.addons.mod_forum')
 
         promises.push($mmaModForumSync.syncForumReplies(forum.id).then(function(result) {
             if (result.warnings && result.warnings.length) {
-                warnings = warnings.concat(result.warnings);
                 $mmUtil.showErrorModal(result.warnings[0]);
+            }
+
+            if (result && result.updated) {
+                // Sync successful, send event.
+                $mmEvents.trigger(mmaModForumManualSyncedEvent, {
+                    siteid: $mmSite.getId(),
+                    forumid: forum.id,
+                    userid: $mmSite.getUserId(),
+                    warnings: result.warnings
+                });
             }
 
             return result.updated;
         }));
 
         return $q.all(promises).then(function(results) {
-            var updated = results.reduce(function(a, b) {
+            return results.reduce(function(a, b) {
                 return a || b;
             }, false);
-
-            if (updated) {
-                // Sync successful, send event.
-                $mmEvents.trigger(mmaModForumManualSyncedEvent, {
-                    siteid: $mmSite.getId(),
-                    forumid: forum.id,
-                    userid: $mmSite.getUserId(),
-                    warnings: warnings
-                });
-            }
-            return updated;
         }).catch(function(error) {
             if (showErrors) {
                 if (error) {
@@ -220,7 +232,7 @@ angular.module('mm.addons.mod_forum')
     }
 
     // Refresh forum data and discussions list.
-    function refreshData(sync, showErrors) {
+    function refreshData(sync) {
         var promises = [];
         promises.push($mmaModForum.invalidateForumData(courseid));
         if (forum) {
@@ -228,7 +240,7 @@ angular.module('mm.addons.mod_forum')
             promises.push($mmGroups.invalidateActivityGroupMode(forum.cmid));
         }
         return $q.all(promises).finally(function() {
-            return fetchForumDataAndDiscussions(true, sync, showErrors);
+            return fetchForumDataAndDiscussions(true, sync);
         });
     }
 
@@ -242,7 +254,11 @@ angular.module('mm.addons.mod_forum')
                 shouldScrollTop = true;
             }
             $scope.discussionsLoaded = false;
-            showSpinnerAndFetch(false);
+            $scope.refreshIcon = 'spinner';
+            refreshData(false).finally(function() {
+                $scope.refreshIcon = 'ion-refresh';
+                $scope.discussionsLoaded = true;
+            });
             // Check completion since it could be configured to complete once the user adds a new discussion or replies.
             $mmCourse.checkModuleCompletion(courseid, module.completionstatus);
         }
@@ -254,7 +270,6 @@ angular.module('mm.addons.mod_forum')
         });
     }).finally(function() {
         $scope.refreshIcon = 'ion-refresh';
-        $scope.syncIcon = 'ion-loop';
         $scope.discussionsLoaded = true;
     });
 
@@ -266,49 +281,33 @@ angular.module('mm.addons.mod_forum')
     };
 
     // Pull to refresh.
-    $scope.refreshDiscussions = function(showErrors) {
+    $scope.refreshDiscussions = function() {
         if ($scope.discussionsLoaded) {
-            return showSpinnerAndFetch(true, showErrors);
+            $scope.refreshIcon = 'spinner';
+            return refreshData(true).finally(function() {
+                $scope.discussionsLoaded = true;
+                $scope.refreshIcon = 'ion-refresh';
+                $scope.$broadcast('scroll.refreshComplete');
+            });
         }
     };
-
-    // Show spinner and fetch or refresh the data.
-    function showSpinnerAndFetch(sync, showErrors) {
-        $scope.refreshIcon = 'spinner';
-        $scope.syncIcon = 'spinner';
-        return refreshData(sync, showErrors).finally(function() {
-            $scope.discussionsLoaded = true;
-            $scope.refreshIcon = 'ion-refresh';
-            $scope.syncIcon = 'ion-loop';
-            $scope.$broadcast('scroll.refreshComplete');
-        });
-    }
 
     // Context Menu Description action.
     $scope.expandDescription = function() {
         $mmText.expandText($translate.instant('mm.core.description'), $scope.description, false, mmaModForumComponent, module.id);
     };
 
-    // Refresh online status when changes.
-    onlineObserver = $mmEvents.on(mmCoreEventOnlineStatusChanged, function(online) {
-        $scope.isOnline = online;
-    });
-
     // Refresh data if this forum is synchronized automatically.
     syncObserver = $mmEvents.on(mmaModForumAutomSyncedEvent, function(data) {
         if (forum && data && data.siteid == $mmSite.getId() && data.forumid == forum.id && data.userid == $mmSite.getUserId()) {
             // Refresh the data.
             $scope.discussionsLoaded = false;
-            return showSpinnerAndFetch(false);
-        }
-    });
-
-    // Refresh data if this forum discussion is synchronized from discussions list.
-    syncManualObserver = $mmEvents.on(mmaModForumManualSyncedEvent, function(data) {
-        if (data && data.siteid == $mmSite.getId() && data.forumid == forum.id && data.userid == $mmSite.getUserId()) {
-            // Refresh the data.
-            $scope.discussionsLoaded = false;
-            return showSpinnerAndFetch(false);
+            $scope.refreshIcon = 'spinner';
+            scrollTop();
+            refreshData(false).finally(function() {
+                $scope.discussionsLoaded = true;
+                $scope.refreshIcon = 'ion-refresh';
+            });
         }
     });
 
@@ -328,6 +327,5 @@ angular.module('mm.addons.mod_forum')
         obsNewDisc && obsNewDisc.off && obsNewDisc.off();
         obsReply && obsReply.off && obsReply.off();
         syncObserver && syncObserver.off && syncObserver.off();
-        onlineObserver && onlineObserver.off && onlineObserver.off();
     });
 });
